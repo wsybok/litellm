@@ -296,6 +296,7 @@ default_team_settings: Optional[List] = None
 max_user_budget: Optional[float] = None
 default_max_internal_user_budget: Optional[float] = None
 max_internal_user_budget: Optional[float] = None
+max_ui_session_budget: Optional[float] = 10  # $10 USD budgets for UI Chat sessions
 internal_user_budget_duration: Optional[str] = None
 tag_budget_config: Optional[Dict[str, BudgetConfig]] = None
 max_end_user_budget: Optional[float] = None
@@ -468,6 +469,7 @@ friendliai_models: List = []
 palm_models: List = []
 groq_models: List = []
 azure_models: List = []
+azure_text_models: List = []
 anyscale_models: List = []
 cerebras_models: List = []
 galadriel_models: List = []
@@ -480,6 +482,8 @@ def add_known_models():
             open_ai_chat_completion_models.append(key)
         elif value.get("litellm_provider") == "text-completion-openai":
             open_ai_text_completion_models.append(key)
+        elif value.get("litellm_provider") == "azure_text":
+            azure_text_models.append(key)
         elif value.get("litellm_provider") == "cohere":
             cohere_models.append(key)
         elif value.get("litellm_provider") == "cohere_chat":
@@ -846,6 +850,7 @@ model_list = (
     + cerebras_models
     + galadriel_models
     + sambanova_models
+    + azure_text_models
 )
 
 
@@ -892,7 +897,8 @@ models_by_provider: dict = {
     "friendliai": friendliai_models,
     "palm": palm_models,
     "groq": groq_models,
-    "azure": azure_models,
+    "azure": azure_models + azure_text_models,
+    "azure_text": azure_text_models,
     "anyscale": anyscale_models,
     "cerebras": cerebras_models,
     "galadriel": galadriel_models,
