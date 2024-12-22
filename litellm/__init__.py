@@ -113,7 +113,7 @@ token: Optional[str] = (
 )
 telemetry = True
 max_tokens = 256  # OpenAI Defaults
-drop_params = bool(os.getenv("LITELLM_DROP_PARAMS", False))
+drop_params = bool(os.getenv("LITELLM_DROP_PARAMS", True))
 modify_params = False
 retry = True
 ### AUTH ###
