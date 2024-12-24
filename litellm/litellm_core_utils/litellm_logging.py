@@ -34,7 +34,11 @@ from litellm.litellm_core_utils.redact_messages import (
     redact_message_input_output_from_custom_logger,
     redact_message_input_output_from_logging,
 )
-from litellm.types.llms.openai import AllMessageValues, HttpxBinaryResponseContent
+from litellm.types.llms.openai import (
+    AllMessageValues,
+    Batch,
+    HttpxBinaryResponseContent,
+)
 from litellm.types.rerank import RerankResponse
 from litellm.types.router import SPECIAL_MODEL_INFO_PARAMS
 from litellm.types.utils import (
@@ -43,6 +47,7 @@ from litellm.types.utils import (
     ImageResponse,
     LiteLLMLoggingBaseClass,
     ModelResponse,
+    ModelResponseStream,
     StandardCallbackDynamicParams,
     StandardLoggingAdditionalHeaders,
     StandardLoggingHiddenParams,
@@ -741,12 +746,14 @@ class Logging(LiteLLMLoggingBaseClass):
         self,
         result: Union[
             ModelResponse,
+            ModelResponseStream,
             EmbeddingResponse,
             ImageResponse,
             TranscriptionResponse,
             TextCompletionResponse,
             HttpxBinaryResponseContent,
             RerankResponse,
+            Batch,
         ],
         cache_hit: Optional[bool] = None,
     ) -> Optional[float]:
@@ -787,11 +794,15 @@ class Logging(LiteLLMLoggingBaseClass):
                 "prompt": prompt,
             }
         except Exception as e:  # error creating kwargs for cost calculation
+            debug_info = StandardLoggingModelCostFailureDebugInformation(
+                error_str=str(e),
+                traceback_str=traceback.format_exc(),
+            )
+            verbose_logger.debug(
+                f"response_cost_failure_debug_information: {debug_info}"
+            )
             self.model_call_details["response_cost_failure_debug_information"] = (
-                StandardLoggingModelCostFailureDebugInformation(
-                    error_str=str(e),
-                    traceback_str=traceback.format_exc(),
-                )
+                debug_info
             )
             return None
 
@@ -801,19 +812,23 @@ class Logging(LiteLLMLoggingBaseClass):
             )
             return response_cost
         except Exception as e:  # error calculating cost
+            debug_info = StandardLoggingModelCostFailureDebugInformation(
+                error_str=str(e),
+                traceback_str=traceback.format_exc(),
+                model=response_cost_calculator_kwargs["model"],
+                cache_hit=response_cost_calculator_kwargs["cache_hit"],
+                custom_llm_provider=response_cost_calculator_kwargs[
+                    "custom_llm_provider"
+                ],
+                base_model=response_cost_calculator_kwargs["base_model"],
+                call_type=response_cost_calculator_kwargs["call_type"],
+                custom_pricing=response_cost_calculator_kwargs["custom_pricing"],
+            )
+            verbose_logger.debug(
+                f"response_cost_failure_debug_information: {debug_info}"
+            )
             self.model_call_details["response_cost_failure_debug_information"] = (
-                StandardLoggingModelCostFailureDebugInformation(
-                    error_str=str(e),
-                    traceback_str=traceback.format_exc(),
-                    model=response_cost_calculator_kwargs["model"],
-                    cache_hit=response_cost_calculator_kwargs["cache_hit"],
-                    custom_llm_provider=response_cost_calculator_kwargs[
-                        "custom_llm_provider"
-                    ],
-                    base_model=response_cost_calculator_kwargs["base_model"],
-                    call_type=response_cost_calculator_kwargs["call_type"],
-                    custom_pricing=response_cost_calculator_kwargs["custom_pricing"],
-                )
+                debug_info
             )
 
         return None
@@ -848,12 +863,14 @@ class Logging(LiteLLMLoggingBaseClass):
             ):  # handle streaming separately
                 if (
                     isinstance(result, ModelResponse)
+                    or isinstance(result, ModelResponseStream)
                     or isinstance(result, EmbeddingResponse)
                     or isinstance(result, ImageResponse)
                     or isinstance(result, TranscriptionResponse)
                     or isinstance(result, TextCompletionResponse)
                     or isinstance(result, HttpxBinaryResponseContent)  # tts
                     or isinstance(result, RerankResponse)
+                    or isinstance(result, Batch)
                 ):
                     ## RESPONSE COST ##
                     self.model_call_details["response_cost"] = (
@@ -955,6 +972,7 @@ class Logging(LiteLLMLoggingBaseClass):
             if self.stream and (
                 isinstance(result, litellm.ModelResponse)
                 or isinstance(result, TextCompletionResponse)
+                or isinstance(result, ModelResponseStream)
             ):
                 complete_streaming_response: Optional[
                     Union[ModelResponse, TextCompletionResponse]
@@ -966,17 +984,11 @@ class Logging(LiteLLMLoggingBaseClass):
                     streaming_chunks=self.sync_streaming_chunks,
                     is_async=False,
                 )
-            _caching_complete_streaming_response: Optional[
-                Union[ModelResponse, TextCompletionResponse]
-            ] = None
             if complete_streaming_response is not None:
                 verbose_logger.debug(
                     "Logging Details LiteLLM-Success Call streaming complete"
                 )
                 self.model_call_details["complete_streaming_response"] = (
-                    complete_streaming_response
-                )
-                _caching_complete_streaming_response = copy.deepcopy(
                     complete_streaming_response
                 )
                 self.model_call_details["response_cost"] = (
@@ -1474,6 +1486,7 @@ class Logging(LiteLLMLoggingBaseClass):
         ] = None
         if self.stream is True and (
             isinstance(result, litellm.ModelResponse)
+            or isinstance(result, litellm.ModelResponseStream)
             or isinstance(result, TextCompletionResponse)
         ):
             complete_streaming_response: Optional[

@@ -991,6 +991,7 @@ from .utils import (
     get_api_base,
     get_first_chars_messages,
     ModelResponse,
+    ModelResponseStream,
     EmbeddingResponse,
     ImageResponse,
     TranscriptionResponse,
@@ -1048,9 +1049,11 @@ from .llms.petals.completion.transformation import PetalsConfig
 from .llms.deprecated_providers.aleph_alpha import AlephAlphaConfig
 from .llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
     VertexGeminiConfig,
-    GoogleAIStudioGeminiConfig,
     VertexAIConfig,
-    GoogleAIStudioGeminiConfig as GeminiConfig,
+)
+from .llms.gemini.chat.transformation import (
+    GoogleAIStudioGeminiConfig,
+    GoogleAIStudioGeminiConfig as GeminiConfig,  # aliased to maintain backwards compatibility
 )
 
 
@@ -1157,6 +1160,7 @@ from .llms.perplexity.chat.transformation import PerplexityChatConfig
 from .llms.azure.chat.o1_transformation import AzureOpenAIO1Config
 from .llms.watsonx.completion.transformation import IBMWatsonXAIConfig
 from .llms.watsonx.chat.transformation import IBMWatsonXChatConfig
+from .llms.watsonx.embed.transformation import IBMWatsonXEmbeddingConfig
 from .main import *  # type: ignore
 from .integrations import *
 from .exceptions import (

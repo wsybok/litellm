@@ -712,16 +712,8 @@ def client(original_function):  # noqa: PLR0915
     def wrapper(*args, **kwargs):  # noqa: PLR0915
         # DO NOT MOVE THIS. It always needs to run first
         # Check if this is an async function. If so only execute the async function
-        if (
-            kwargs.get("acompletion", False) is True
-            or kwargs.get("aembedding", False) is True
-            or kwargs.get("aimg_generation", False) is True
-            or kwargs.get("amoderation", False) is True
-            or kwargs.get("atext_completion", False) is True
-            or kwargs.get("atranscription", False) is True
-            or kwargs.get("arerank", False) is True
-            or kwargs.get("_arealtime", False) is True
-        ):
+        call_type = original_function.__name__
+        if _is_async_request(kwargs):
             # [OPTIONAL] CHECK MAX RETRIES / REQUEST
             if litellm.num_retries_per_request is not None:
                 # check if previous_models passed in as ['litellm_params']['metadata]['previous_models']
@@ -759,20 +751,10 @@ def client(original_function):  # noqa: PLR0915
         )
 
         # only set litellm_call_id if its not in kwargs
-        call_type = original_function.__name__
         if "litellm_call_id" not in kwargs:
             kwargs["litellm_call_id"] = str(uuid.uuid4())
 
-        model: Optional[str] = None
-        try:
-            model = args[0] if len(args) > 0 else kwargs["model"]
-        except Exception:
-            model = None
-            if (
-                call_type != CallTypes.image_generation.value
-                and call_type != CallTypes.text_completion.value
-            ):
-                raise ValueError("model param not passed in.")
+        model: Optional[str] = args[0] if len(args) > 0 else kwargs.get("model", None)
 
         try:
             if logging_obj is None:
@@ -1022,16 +1004,7 @@ def client(original_function):  # noqa: PLR0915
         if "litellm_call_id" not in kwargs:
             kwargs["litellm_call_id"] = str(uuid.uuid4())
 
-        model = ""
-        try:
-            model = args[0] if len(args) > 0 else kwargs["model"]
-        except Exception:
-            if (
-                call_type != CallTypes.aimage_generation.value  # model optional
-                and call_type != CallTypes.atext_completion.value  # can also be engine
-                and call_type != CallTypes.amoderation.value
-            ):
-                raise ValueError("model param not passed in.")
+        model: Optional[str] = args[0] if len(args) > 0 else kwargs.get("model", None)
 
         try:
             if logging_obj is None:
@@ -1054,7 +1027,7 @@ def client(original_function):  # noqa: PLR0915
             )
             _caching_handler_response: CachingHandlerResponse = (
                 await _llm_caching_handler._async_get_cache(
-                    model=model,
+                    model=model or "",
                     original_function=original_function,
                     logging_obj=logging_obj,
                     start_time=start_time,
@@ -1100,7 +1073,7 @@ def client(original_function):  # noqa: PLR0915
                     "id", None
                 )
                 result._hidden_params["api_base"] = get_api_base(
-                    model=model,
+                    model=model or "",
                     optional_params=kwargs,
                 )
                 result._hidden_params["response_cost"] = (
@@ -1228,6 +1201,29 @@ def client(original_function):  # noqa: PLR0915
         return wrapper_async
     else:
         return wrapper
+
+
+def _is_async_request(kwargs: Optional[dict]) -> bool:
+    """
+    Returns True if the call type is an internal async request.
+
+    eg. litellm.acompletion, litellm.aimage_generation, litellm.acreate_batch, litellm._arealtime
+    """
+    if kwargs is None:
+        return False
+    if (
+        kwargs.get("acompletion", False) is True
+        or kwargs.get("aembedding", False) is True
+        or kwargs.get("aimg_generation", False) is True
+        or kwargs.get("amoderation", False) is True
+        or kwargs.get("atext_completion", False) is True
+        or kwargs.get("atranscription", False) is True
+        or kwargs.get("arerank", False) is True
+        or kwargs.get("_arealtime", False) is True
+        or kwargs.get("acreate_batch", False) is True
+    ):
+        return True
+    return False
 
 
 @lru_cache(maxsize=128)
@@ -6244,7 +6240,9 @@ class ProviderConfigManager:
             return litellm.VoyageEmbeddingConfig()
         elif litellm.LlmProviders.TRITON == provider:
             return litellm.TritonEmbeddingConfig()
-        raise ValueError(f"Provider {provider} does not support embedding config")
+        elif litellm.LlmProviders.WATSONX == provider:
+            return litellm.IBMWatsonXEmbeddingConfig()
+        raise ValueError(f"Provider {provider.value} does not support embedding config")
 
     @staticmethod
     def get_provider_rerank_config(
@@ -6314,3 +6312,31 @@ def is_prompt_caching_valid_prompt(
     except Exception as e:
         verbose_logger.error(f"Error in is_prompt_caching_valid_prompt: {e}")
         return False
+
+
+def extract_duration_from_srt_or_vtt(srt_or_vtt_content: str) -> Optional[float]:
+    """
+    Extracts the total duration (in seconds) from SRT or VTT content.
+
+    Args:
+        srt_or_vtt_content (str): The content of an SRT or VTT file as a string.
+
+    Returns:
+        Optional[float]: The total duration in seconds, or None if no timestamps are found.
+    """
+    # Regular expression to match timestamps in the format "hh:mm:ss,ms" or "hh:mm:ss.ms"
+    timestamp_pattern = r"(\d{2}):(\d{2}):(\d{2})[.,](\d{3})"
+
+    timestamps = re.findall(timestamp_pattern, srt_or_vtt_content)
+
+    if not timestamps:
+        return None
+
+    # Convert timestamps to seconds and find the max (end time)
+    durations = []
+    for match in timestamps:
+        hours, minutes, seconds, milliseconds = map(int, match)
+        total_seconds = hours * 3600 + minutes * 60 + seconds + milliseconds / 1000.0
+        durations.append(total_seconds)
+
+    return max(durations) if durations else None
