@@ -388,10 +388,16 @@ class Logging(LiteLLMLoggingBaseClass):
         return standard_callback_dynamic_params
 
     def update_environment_variables(
-        self, model, user, optional_params, litellm_params, **additional_params
+        self,
+        litellm_params: Dict,
+        optional_params: Dict,
+        model: Optional[str] = None,
+        user: Optional[str] = None,
+        **additional_params,
     ):
         self.optional_params = optional_params
-        self.model = model
+        if model is not None:
+            self.model = model
         self.user = user
         self.litellm_params = scrub_sensitive_keys_in_metadata(litellm_params)
         self.logger_fn = litellm_params.get("logger_fn", None)
@@ -2885,9 +2891,11 @@ def get_standard_logging_object_payload(
         litellm_params = kwargs.get("litellm_params", {})
         proxy_server_request = litellm_params.get("proxy_server_request") or {}
         end_user_id = proxy_server_request.get("body", {}).get("user", None)
-        metadata = (
-            litellm_params.get("metadata", {}) or {}
-        )  # if litellm_params['metadata'] == None
+        metadata: dict = (
+            litellm_params.get("litellm_metadata")
+            or litellm_params.get("metadata", None)
+            or {}
+        )
         completion_start_time = kwargs.get("completion_start_time", end_time)
         call_type = kwargs.get("call_type")
         cache_hit = kwargs.get("cache_hit", False)
@@ -2961,11 +2969,19 @@ def get_standard_logging_object_payload(
             kwargs=kwargs,
         )
 
+        stream: Optional[bool] = None
+        if (
+            kwargs.get("complete_streaming_response") is not None
+            or kwargs.get("async_complete_streaming_response") is not None
+        ):
+            stream = True
+
         payload: StandardLoggingPayload = StandardLoggingPayload(
             id=str(id),
             trace_id=kwargs.get("litellm_trace_id"),  # type: ignore
             call_type=call_type or "",
             cache_hit=cache_hit,
+            stream=stream,
             status=status,
             saved_cache_cost=saved_cache_cost,
             startTime=start_time_float,

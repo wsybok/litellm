@@ -1506,6 +1506,7 @@ class StandardLoggingPayload(TypedDict):
     id: str
     trace_id: str  # Trace multiple LLM calls belonging to same overall request (e.g. fallbacks/retries)
     call_type: str
+    stream: Optional[bool]
     response_cost: float
     response_cost_failure_debug_info: Optional[
         StandardLoggingModelCostFailureDebugInformation
@@ -1591,6 +1592,7 @@ class StandardCallbackDynamicParams(TypedDict, total=False):
 
 all_litellm_params = [
     "metadata",
+    "litellm_metadata",
     "litellm_trace_id",
     "tags",
     "acompletion",
