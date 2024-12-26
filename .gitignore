@@ -1,6 +1,7 @@
 .venv
 .env
 .newenv
+docker-compose.yml
 newenv/*
 litellm/proxy/myenv/*
 litellm_uuid.txt
