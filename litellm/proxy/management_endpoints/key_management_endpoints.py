@@ -61,30 +61,79 @@ def _get_user_in_team(
     return None
 
 
-def _team_key_generation_team_member_check(
-    team_table: LiteLLM_TeamTableCachedObj,
-    user_api_key_dict: UserAPIKeyAuth,
-    team_key_generation: Optional[TeamUIKeyGenerationConfig],
-):
+def _is_allowed_to_create_key(
+    user_api_key_dict: UserAPIKeyAuth, user_id: Optional[str], team_id: Optional[str]
+) -> bool:
+    """
+    Assert user only creates keys for themselves
+
+    Relevant issue: https://github.com/BerriAI/litellm/issues/7336
+    """
+    ## BASE CASE - PROXY ADMIN
     if (
-        team_key_generation is None
-        or "allowed_team_member_roles" not in team_key_generation
+        user_api_key_dict.user_role is not None
+        and user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value
     ):
         return True
 
-    user_in_team = _get_user_in_team(
+    if user_id is not None:
+        assert (
+            user_id == user_api_key_dict.user_id
+        ), "User can only create keys for themselves. Got user_id={}, Your ID={}".format(
+            user_id, user_api_key_dict.user_id
+        )
+
+    if team_id is not None:
+        assert (
+            user_api_key_dict.team_id == team_id
+        ), "User can only create keys for their own team. Got={}, Your Team ID={}".format(
+            team_id, user_api_key_dict.team_id
+        )
+
+    return True
+
+
+def _team_key_generation_team_member_check(
+    assigned_user_id: Optional[str],
+    team_table: LiteLLM_TeamTableCachedObj,
+    user_api_key_dict: UserAPIKeyAuth,
+    team_key_generation: TeamUIKeyGenerationConfig,
+):
+    if assigned_user_id is not None:
+        key_assigned_user_in_team = _get_user_in_team(
+            team_table=team_table, user_id=assigned_user_id
+        )
+
+        if key_assigned_user_in_team is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User={assigned_user_id} not assigned to team={team_table.team_id}",
+            )
+
+    key_creating_user_in_team = _get_user_in_team(
         team_table=team_table, user_id=user_api_key_dict.user_id
     )
-    if user_in_team is None:
+
+    is_admin = (
+        user_api_key_dict.user_role is not None
+        and user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value
+    )
+
+    if is_admin:
+        return True
+    elif key_creating_user_in_team is None:
         raise HTTPException(
             status_code=400,
             detail=f"User={user_api_key_dict.user_id} not assigned to team={team_table.team_id}",
         )
-
-    if user_in_team.role not in team_key_generation["allowed_team_member_roles"]:
+    elif (
+        "allowed_team_member_roles" in team_key_generation
+        and key_creating_user_in_team.role
+        not in team_key_generation["allowed_team_member_roles"]
+    ):
         raise HTTPException(
             status_code=400,
-            detail=f"Team member role {user_in_team.role} not in allowed_team_member_roles={team_key_generation['allowed_team_member_roles']}",
+            detail=f"Team member role {key_creating_user_in_team.role} not in allowed_team_member_roles={team_key_generation['allowed_team_member_roles']}",
         )
     return True
 
@@ -111,14 +160,17 @@ def _team_key_generation_check(
     data: GenerateKeyRequest,
 ):
     if (
-        litellm.key_generation_settings is None
-        or litellm.key_generation_settings.get("team_key_generation") is None
+        litellm.key_generation_settings is not None
+        and "team_key_generation" in litellm.key_generation_settings
     ):
-        return True
-
-    _team_key_generation = litellm.key_generation_settings["team_key_generation"]  # type: ignore
+        _team_key_generation = litellm.key_generation_settings["team_key_generation"]
+    else:
+        _team_key_generation = TeamUIKeyGenerationConfig(
+            allowed_team_member_roles=["admin", "member"],
+        )
 
     _team_key_generation_team_member_check(
+        assigned_user_id=data.user_id,
         team_table=team_table,
         user_api_key_dict=user_api_key_dict,
         team_key_generation=_team_key_generation,
@@ -183,21 +235,17 @@ def key_generation_check(
     """
     Check if admin has restricted key creation to certain roles for teams or individuals
     """
-    if (
-        litellm.key_generation_settings is None
-        or user_api_key_dict.user_role == LitellmUserRoles.PROXY_ADMIN.value
-    ):
-        return True
 
     ## check if key is for team or individual
     is_team_key = _is_team_key(data=data)
-
     if is_team_key:
-        if team_table is None:
+        if team_table is None and litellm.key_generation_settings is not None:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unable to find team object in database. Team ID: {data.team_id}",
             )
+        elif team_table is None:
+            return True  # assume user is assigning team_id without using the team table
         return _team_key_generation_check(
             team_table=team_table,
             user_api_key_dict=user_api_key_dict,
@@ -300,21 +348,44 @@ async def generate_key_fn(  # noqa: PLR0915
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN, detail=message
                 )
-        elif litellm.key_generation_settings is not None:
-            if data.team_id is None:
-                team_table: Optional[LiteLLM_TeamTableCachedObj] = None
-            else:
+        team_table: Optional[LiteLLM_TeamTableCachedObj] = None
+        if data.team_id is not None:
+            try:
                 team_table = await get_team_object(
                     team_id=data.team_id,
                     prisma_client=prisma_client,
                     user_api_key_cache=user_api_key_cache,
                     parent_otel_span=user_api_key_dict.parent_otel_span,
                 )
-            key_generation_check(
-                team_table=team_table,
+            except Exception as e:
+                verbose_proxy_logger.debug(
+                    f"Error getting team object in `/key/generate`: {e}"
+                )
+                team_table = None
+
+        key_generation_check(
+            team_table=team_table,
+            user_api_key_dict=user_api_key_dict,
+            data=data,
+        )
+
+        try:
+            _is_allowed_to_create_key(
                 user_api_key_dict=user_api_key_dict,
-                data=data,
+                user_id=data.user_id,
+                team_id=data.team_id,
             )
+        except AssertionError as e:
+            raise HTTPException(
+                status_code=403,
+                detail=str(e),
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=str(e),
+            )
+
         # check if user set default key/generate params on config.yaml
         if litellm.default_key_generate_params is not None:
             for elem in data:
