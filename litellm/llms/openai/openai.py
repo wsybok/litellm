@@ -1,5 +1,4 @@
 import hashlib
-import os
 import types
 from typing import (
     Any,
@@ -276,6 +275,7 @@ class OpenAIChatCompletion(BaseLLM):
         is_async: bool,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        api_version: Optional[str] = None,
         timeout: Union[float, httpx.Timeout] = httpx.Timeout(None),
         max_retries: Optional[int] = 2,
         organization: Optional[str] = None,
@@ -424,6 +424,9 @@ class OpenAIChatCompletion(BaseLLM):
         print_verbose: Optional[Callable] = None,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        api_version: Optional[str] = None,
+        dynamic_params: Optional[bool] = None,
+        azure_ad_token: Optional[str] = None,
         acompletion: bool = False,
         logger_fn=None,
         headers: Optional[dict] = None,
@@ -433,6 +436,7 @@ class OpenAIChatCompletion(BaseLLM):
         custom_llm_provider: Optional[str] = None,
         drop_params: Optional[bool] = None,
     ):
+
         super().completion()
         try:
             fake_stream: bool = False
@@ -442,6 +446,7 @@ class OpenAIChatCompletion(BaseLLM):
             )
             stream: Optional[bool] = inference_params.pop("stream", False)
             provider_config: Optional[BaseConfig] = None
+
             if custom_llm_provider is not None and model is not None:
                 provider_config = ProviderConfigManager.get_provider_chat_config(
                     model=model, provider=LlmProviders(custom_llm_provider)
@@ -451,6 +456,7 @@ class OpenAIChatCompletion(BaseLLM):
                 fake_stream = provider_config.should_fake_stream(
                     model=model, custom_llm_provider=custom_llm_provider, stream=stream
                 )
+
             if headers:
                 inference_params["extra_headers"] = headers
             if model is None or messages is None:
@@ -470,7 +476,7 @@ class OpenAIChatCompletion(BaseLLM):
             if messages is not None and provider_config is not None:
                 if isinstance(provider_config, OpenAIGPTConfig) or isinstance(
                     provider_config, OpenAIConfig
-                ):
+                ):  # [TODO]: remove. no longer needed as .transform_request can just handle this.
                     messages = provider_config._transform_messages(
                         messages=messages, model=model
                     )
@@ -505,6 +511,7 @@ class OpenAIChatCompletion(BaseLLM):
                                 model=model,
                                 api_base=api_base,
                                 api_key=api_key,
+                                api_version=api_version,
                                 timeout=timeout,
                                 client=client,
                                 max_retries=max_retries,
@@ -521,6 +528,7 @@ class OpenAIChatCompletion(BaseLLM):
                                 model_response=model_response,
                                 api_base=api_base,
                                 api_key=api_key,
+                                api_version=api_version,
                                 timeout=timeout,
                                 client=client,
                                 max_retries=max_retries,
@@ -536,6 +544,7 @@ class OpenAIChatCompletion(BaseLLM):
                             model=model,
                             api_base=api_base,
                             api_key=api_key,
+                            api_version=api_version,
                             timeout=timeout,
                             client=client,
                             max_retries=max_retries,
@@ -547,11 +556,11 @@ class OpenAIChatCompletion(BaseLLM):
                             raise OpenAIError(
                                 status_code=422, message="max retries must be an int"
                             )
-
                         openai_client: OpenAI = self._get_openai_client(  # type: ignore
                             is_async=False,
                             api_key=api_key,
                             api_base=api_base,
+                            api_version=api_version,
                             timeout=timeout,
                             max_retries=max_retries,
                             organization=organization,
@@ -668,6 +677,7 @@ class OpenAIChatCompletion(BaseLLM):
         timeout: Union[float, httpx.Timeout],
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        api_version: Optional[str] = None,
         organization: Optional[str] = None,
         client=None,
         max_retries=None,
@@ -685,6 +695,7 @@ class OpenAIChatCompletion(BaseLLM):
                     is_async=True,
                     api_key=api_key,
                     api_base=api_base,
+                    api_version=api_version,
                     timeout=timeout,
                     max_retries=max_retries,
                     organization=organization,
@@ -759,6 +770,7 @@ class OpenAIChatCompletion(BaseLLM):
         model: str,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        api_version: Optional[str] = None,
         organization: Optional[str] = None,
         client=None,
         max_retries=None,
@@ -768,10 +780,12 @@ class OpenAIChatCompletion(BaseLLM):
         data["stream"] = True
         if stream_options is not None:
             data["stream_options"] = stream_options
+
         openai_client: OpenAI = self._get_openai_client(  # type: ignore
             is_async=False,
             api_key=api_key,
             api_base=api_base,
+            api_version=api_version,
             timeout=timeout,
             max_retries=max_retries,
             organization=organization,
@@ -813,6 +827,7 @@ class OpenAIChatCompletion(BaseLLM):
         logging_obj: LiteLLMLoggingObj,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        api_version: Optional[str] = None,
         organization: Optional[str] = None,
         client=None,
         max_retries=None,
@@ -830,6 +845,7 @@ class OpenAIChatCompletion(BaseLLM):
                     is_async=True,
                     api_key=api_key,
                     api_base=api_base,
+                    api_version=api_version,
                     timeout=timeout,
                     max_retries=max_retries,
                     organization=organization,
@@ -1305,94 +1321,6 @@ class OpenAIChatCompletion(BaseLLM):
         )
 
         return HttpxBinaryResponseContent(response=response.response)
-
-    async def ahealth_check(
-        self,
-        model: Optional[str],
-        api_key: Optional[str],
-        timeout: float,
-        mode: str,
-        messages: Optional[list] = None,
-        input: Optional[list] = None,
-        prompt: Optional[str] = None,
-        organization: Optional[str] = None,
-        api_base: Optional[str] = None,
-    ):
-        client = AsyncOpenAI(
-            api_key=api_key,
-            timeout=timeout,
-            organization=organization,
-            base_url=api_base,
-        )
-        if model is None and mode != "image_generation":
-            raise Exception("model is not set")
-
-        completion = None
-
-        if mode == "completion":
-            completion = await client.completions.with_raw_response.create(
-                model=model,  # type: ignore
-                prompt=prompt,  # type: ignore
-            )
-        elif mode == "chat":
-            if messages is None:
-                raise Exception("messages is not set")
-            completion = await client.chat.completions.with_raw_response.create(
-                model=model,  # type: ignore
-                messages=messages,  # type: ignore
-            )
-        elif mode == "embedding":
-            if input is None:
-                raise Exception("input is not set")
-            completion = await client.embeddings.with_raw_response.create(
-                model=model,  # type: ignore
-                input=input,  # type: ignore
-            )
-        elif mode == "image_generation":
-            if prompt is None:
-                raise Exception("prompt is not set")
-            completion = await client.images.with_raw_response.generate(
-                model=model,  # type: ignore
-                prompt=prompt,  # type: ignore
-            )
-        elif mode == "audio_transcription":
-            # Get the current directory of the file being run
-            pwd = os.path.dirname(os.path.realpath(__file__))
-            file_path = os.path.join(
-                pwd, "../../../tests/gettysburg.wav"
-            )  # proxy address
-            audio_file = open(file_path, "rb")
-            completion = await client.audio.transcriptions.with_raw_response.create(
-                file=audio_file,
-                model=model,  # type: ignore
-                prompt=prompt,  # type: ignore
-            )
-        elif mode == "audio_speech":
-            # Get the current directory of the file being run
-            completion = await client.audio.speech.with_raw_response.create(
-                model=model,  # type: ignore
-                input=prompt,  # type: ignore
-                voice="alloy",
-            )
-        else:
-            raise ValueError("mode not set, passed in mode: " + mode)
-        response = {}
-
-        if completion is None or not hasattr(completion, "headers"):
-            raise Exception("invalid completion response")
-
-        if (
-            completion.headers.get("x-ratelimit-remaining-requests", None) is not None
-        ):  # not provided for dall-e requests
-            response["x-ratelimit-remaining-requests"] = completion.headers[
-                "x-ratelimit-remaining-requests"
-            ]
-
-        if completion.headers.get("x-ratelimit-remaining-tokens", None) is not None:
-            response["x-ratelimit-remaining-tokens"] = completion.headers[
-                "x-ratelimit-remaining-tokens"
-            ]
-        return response
 
 
 class OpenAIFilesAPI(BaseLLM):
